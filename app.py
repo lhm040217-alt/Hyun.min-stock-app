@@ -5,16 +5,16 @@ import pandas as pd
 import time
 
 # --- 페이지 설정 ---
-st.set_page_config(page_title="Tenbagger V18 (Unlimited)", layout="wide")
-st.title("👑 텐배거 마스터피스 V18 (진짜 무제한)")
+st.set_page_config(page_title="Tenbagger V19 (Live)", layout="wide")
+st.title("👑 텐배거 V19 (생존신호 확인용)")
 st.markdown("""
-**"제한을 풀었습니다."**
-* **범위 직접 입력:** 슬라이더를 없애고, 시작~끝 번호를 직접 입력합니다. (예: 0 ~ 3000)
-* **전수조사:** 중간에 멈추지 않고 입력한 범위 전체를 훑습니다.
-* **데이터 수정:** 시총 0원 문제 해결, 대형주 자동 제외
+**"멈춘 게 아닙니다. 일하는 중입니다."**
+* **실시간 로그:** 현재 분석 중인 종목을 화면에 표시합니다.
+* **전수조사:** 입력한 범위(0~3000 등)를 끝까지 파헤칩니다.
+* **기능 포함:** VIP 분류, 재무제표, 대형주 제외 모두 포함.
 """)
 
-# --- [차단 방지용] 코스닥 내장 리스트 ---
+# --- 데이터 로딩 (내장 리스트 + 나스닥) ---
 KOSDAQ_EMERGENCY_LIST = [
     "080220", "393500", "394280", "042700", "007660", "403870", "058470", "277810",
     "348340", "108490", "058610", "094360", "054450", "102120", "098460", "036930",
@@ -29,15 +29,14 @@ KOSDAQ_EMERGENCY_LIST = [
 ]
 
 # --- 사이드바 설정 ---
-st.sidebar.header("🛠 스캔 범위 설정")
+st.sidebar.header("🛠 설정 패널")
 
-# 1. 시장 선택
 market_type = st.sidebar.radio(
     "1. 분석할 시장",
-    ["나스닥 (NASDAQ) - 전수조사", "코스닥 (KOSDAQ) - 핵심내장"]
+    ["나스닥 (NASDAQ)", "코스닥 (KOSDAQ)"]
 )
 
-# 2. 데이터 로딩
+# 데이터 로딩
 @st.cache_data
 def load_data(m_type):
     if "나스닥" in m_type:
@@ -46,7 +45,6 @@ def load_data(m_type):
         except:
             return pd.DataFrame(), "ERROR"
     else:
-        # 코스닥은 내장 리스트 사용
         data = [{'Code': code, 'Name': f"종목_{code}"} for code in KOSDAQ_EMERGENCY_LIST]
         return pd.DataFrame(data), "BUILTIN"
 
@@ -55,37 +53,32 @@ try:
     total_len = len(full_list)
     
     if list_type == "FULL":
-        st.sidebar.success(f"✅ 나스닥 전체 {total_len}개 로딩 완료")
-        
-        # [핵심 수정] 슬라이더 제거 -> 숫자 입력칸 생성
+        st.sidebar.success(f"✅ 목록 로딩 완료: {total_len}개")
         st.sidebar.markdown("---")
-        st.sidebar.subheader(f"2. 검사 범위 입력 (0 ~ {total_len})")
-        st.sidebar.caption("원하는 만큼 숫자를 입력하세요. 제한 없습니다.")
+        st.sidebar.subheader("2. 검사 범위 입력 (제한 없음)")
         
-        col1, col2 = st.sidebar.columns(2)
-        # 시작 번호 (기본 0)
-        start_idx = col1.number_input("시작 번호", min_value=0, max_value=total_len-1, value=0)
-        # 끝 번호 (기본 1000, 최대 5000까지 입력 가능하게 품)
-        end_idx = col2.number_input("끝 번호", min_value=1, max_value=total_len, value=min(1000, total_len))
+        c1, c2 = st.sidebar.columns(2)
+        start_idx = c1.number_input("시작 번호", 0, total_len-1, 0)
+        end_idx = c2.number_input("끝 번호", 1, total_len, min(100, total_len)) 
+        # (테스트를 위해 기본값은 100으로 뒀으나, 3000 입력하면 3000개 다 돌아갑니다)
         
     else:
-        st.sidebar.info(f"✅ 코스닥 핵심 {total_len}개 (내장 리스트)")
+        st.sidebar.info(f"✅ 코스닥 내장 리스트: {total_len}개")
         start_idx, end_idx = 0, total_len
 
-except Exception as e:
-    st.error("데이터 로딩 실패")
+except Exception:
+    st.error("데이터 로딩 중 치명적 오류")
     st.stop()
 
-# 3. VIP 기준
 st.sidebar.markdown("---")
 vip_cap_limit = st.sidebar.number_input("VIP 시총 상한선 (억/백만달러)", value=5000)
 
 # --- 분석 로직 ---
-def analyze_stock_v18(ticker, name, country):
+def analyze_stock_v19(ticker, name, country):
     try:
         stock = yf.Ticker(ticker)
         
-        # 1. 차트 데이터 (60일)
+        # 1. 차트 (60일)
         df = stock.history(period="60d")
         if len(df) < 20: return None
         if df['Volume'].iloc[-1] == 0: return None
@@ -94,21 +87,20 @@ def analyze_stock_v18(ticker, name, country):
         volume = df['Volume']
         curr_price = close.iloc[-1]
 
-        # 2. 시가총액 (Fast Info 사용 - 0원 문제 해결)
+        # 2. 시가총액
         try:
             mkt_cap = stock.fast_info['market_cap']
         except:
             mkt_cap = 0
             
-        # 3. 대형주 필터링
+        # 3. 대형주 필터
         if country == "KR":
             mkt_cap_calc = mkt_cap / 100000000 
         else:
             mkt_cap_calc = mkt_cap / 1000000
             
-        # 설정한 시총보다 크면 통과 (결과 제외)
         if mkt_cap_calc > vip_cap_limit: return None
-        if mkt_cap_calc == 0: return None # 데이터 오류 제외
+        if mkt_cap_calc == 0: return None
 
         # 4. 기술적 지표
         vol_avg = volume.iloc[-20:-1].mean()
@@ -116,7 +108,7 @@ def analyze_stock_v18(ticker, name, country):
         vol_ratio = volume.iloc[-1] / vol_avg
         price_change = (curr_price - close.iloc[-5]) / close.iloc[-5] * 100
 
-        # 5. 재무 정보 (보조)
+        # 5. 재무 정보 (성장률 등)
         try:
             info = stock.info
             rev_growth = info.get('revenueGrowth', 0)
@@ -171,19 +163,20 @@ def analyze_stock_v18(ticker, name, country):
     except:
         return None
 
-# --- 실행 버튼 ---
-if st.button(f"🚀 {start_idx}번 ~ {end_idx}번 전수조사 시작"):
+# --- 실행 버튼 및 로그창 ---
+if st.button(f"🚀 {start_idx}번 ~ {end_idx}번 분석 시작"):
     
-    # 슬라이싱 (무조건 입력한 만큼 다 가져옴)
     target_slice = full_list.iloc[start_idx:end_idx]
+    total_target = len(target_slice)
     
     vip_list = []
     hot_list = []
     
-    st.info(f"총 {len(target_slice)}개 종목을 하나도 빠짐없이 검사합니다. (시간이 소요됩니다)")
+    # 여기가 생존신호 보내는 곳
+    st.info(f"총 {total_target}개 종목 스캔을 시작합니다. 화면이 움직이는지 확인하세요.")
     
     progress_bar = st.progress(0)
-    status_text = st.empty()
+    status_text = st.empty() # 실시간 로그창
     
     for i, row in enumerate(target_slice.iterrows()):
         idx, data = row
@@ -197,9 +190,10 @@ if st.button(f"🚀 {start_idx}번 ~ {end_idx}번 전수조사 시작"):
             name = data['Name']
             country = "KR"
             
-        status_text.write(f"🔍 [{i+1}/{len(target_slice)}] 분석 중... {ticker}")
+        # [중요] 실시간으로 무슨 종목 보는지 찍어줌
+        status_text.text(f"[{i+1}/{total_target}] 검색중... {ticker} ({name})")
         
-        res = analyze_stock_v18(ticker, name, country)
+        res = analyze_stock_v19(ticker, name, country)
         
         if res:
             if res['등급'] == "VIP":
@@ -207,15 +201,12 @@ if st.button(f"🚀 {start_idx}번 ~ {end_idx}번 전수조사 시작"):
             else:
                 hot_list.append(res)
         
-        progress_bar.progress((i + 1) / len(target_slice))
+        progress_bar.progress((i + 1) / total_target)
 
-    status_text.empty()
+    status_text.success("분석이 끝났습니다! 결과를 확인하세요.")
     progress_bar.empty()
     
     # --- 결과 출력 ---
-    st.success("분석 완료!")
-
-    # VIP
     st.markdown(f"## 💎 텐배거 VIP 후보 ({len(vip_list)}개)")
     if vip_list:
         for item in vip_list:
@@ -229,11 +220,10 @@ if st.button(f"🚀 {start_idx}번 ~ {end_idx}번 전수조사 시작"):
                 c3.write(f"이익: {item['이익률']}")
                 c4.markdown(f"[⚡뉴스]({item['뉴스']})")
     else:
-        st.info("이 구간에 VIP 조건(시총작고+급등)을 만족하는 종목이 없습니다.")
+        st.info("조건에 맞는 VIP 종목이 없습니다.")
 
     st.divider()
 
-    # HOT
     st.markdown(f"### 🔥 일반 급등주 ({len(hot_list)}개)")
     if hot_list:
         df_hot = pd.DataFrame(hot_list)
@@ -242,4 +232,4 @@ if st.button(f"🚀 {start_idx}번 ~ {end_idx}번 전수조사 시작"):
             use_container_width=True
         )
     else:
-        st.write("발견된 종목 없음")
+        st.write("발견된 급등주 없음")
