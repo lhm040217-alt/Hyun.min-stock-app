@@ -154,4 +154,3 @@ if st.button("🔥 글로벌 텐배거 발굴 시작"):
                 st.divider()
     else:
         st.warning("현재 급등 조건을 만족하는 종목이 없습니다.")
-
