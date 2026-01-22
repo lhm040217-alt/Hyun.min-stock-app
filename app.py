@@ -6,220 +6,201 @@ from datetime import datetime, timedelta
 import time
 
 # --- 페이지 설정 ---
-st.set_page_config(page_title="Tenbagger Deep Dive V10", layout="wide")
-
-st.title("🐢 텐배거 딥 다이브 V10 (정밀분석판)")
+st.set_page_config(page_title="Tenbagger Classifier V13", layout="wide")
+st.title("💎 텐배거 분류기 V13 (VIP 식별 시스템)")
 st.markdown("""
-**"속도보다 깊이"**를 추구합니다. 
-주가뿐만 아니라 **매출성장률, 영업이익률, 부채비율, ROE**를 전수 조사하여 
-**'돈 잘 벌고 성장하는데 아직 싼 기업'**을 찾아냅니다.
+**"전수조사 + 등급 분류"**
+전체 종목을 스캔하되, 피터 린치의 **'텐배거 조건(시총+거래량)'**을 만족하는 종목은 
+**[VIP]**로 따로 분류하여 붉은색으로 강조합니다.
 """)
 
-# --- 사이드바 설정 ---
-st.sidebar.header("🛠 정밀 검사 설정")
-scan_limit = st.sidebar.slider("분석할 종목 수 (많을수록 오래 걸림)", 30, 200, 50)
-min_growth = st.sidebar.slider("최소 매출 성장률 (%)", 0, 50, 15)
-max_debt = st.sidebar.slider("최대 부채 비율 (%)", 50, 500, 200)
+# --- 사이드바: 설정 ---
+st.sidebar.header("🛠 스캔 및 분류 설정")
+market = st.sidebar.radio("분석할 시장", ["코스닥 (KOSDAQ)", "나스닥 (NASDAQ)"])
 
-# --- 한국 알짜 종목 리스트 (섹터별 대표 성장주 확장판) ---
-KR_TARGETS = {
-    # [반도체 소부장]
-    "한미반도체": "042700.KS", "이수페타시스": "007660.KS", "HPSP": "403870.KQ",
-    "리노공업": "058470.KQ", "가온칩스": "393500.KQ", "주성엔지니어링": "036930.KQ",
-    "하나마이크론": "067310.KQ", "동진쎄미켐": "005290.KQ", "ISC": "095340.KQ",
-    # [2차전지/소재]
-    "에코프로비엠": "247540.KQ", "나노신소재": "121600.KQ", "대주전자재료": "078600.KQ",
-    "윤성에프앤씨": "372170.KQ", "피엔티": "137400.KQ", "코스모신소재": "005070.KS",
-    # [바이오/미용]
-    "알테오젠": "196170.KQ", "클래시스": "214150.KQ", "휴젤": "145020.KQ",
-    "파마리서치": "214450.KQ", "비올": "335890.KQ", "제이시스메디칼": "287410.KQ",
-    "삼천당제약": "000250.KQ", "리가켐바이오": "141080.KQ",
-    # [로봇/AI/SW]
-    "레인보우로보틱스": "277810.KQ", "두산로보틱스": "454910.KS", "더존비즈온": "012510.KS",
-    "한글과컴퓨터": "030520.KQ", "엠로": "058970.KQ"
-}
+# 텐배거 기준값 설정
+st.sidebar.subheader("💎 텐배거(VIP) 기준")
+vip_cap_limit = st.sidebar.slider("시가총액 상한선 (VIP용)", 1000, 10000, 5000) 
+st.sidebar.caption("단위: 억 원 (한국) / 백만 달러 (미국)")
+st.sidebar.caption("※ 이 시총보다 작아야 10배 상승이 쉽습니다.")
 
-# --- 데이터 포맷팅 ---
-def format_value(val, unit, country):
-    if val is None: return "-"
-    if unit == "money":
-        if country == "KR": return f"{val/100000000:.0f}억"
-        else: return f"${val/1000000:.1f}M"
-    if unit == "percent":
-        return f"{val*100:.1f}%"
-    return val
+# 데이터 로딩
+@st.cache_data
+def get_stock_list(market_name):
+    if market_name == "코스닥 (KOSDAQ)":
+        return fdr.StockListing('KOSDAQ')
+    else:
+        return fdr.StockListing('NASDAQ')
 
-# --- 핵심: 딥 다이브 분석 함수 ---
-def analyze_deep(name, ticker, country):
+try:
+    full_list = get_stock_list(market)
+    st.sidebar.success(f"총 {len(full_list)}개 종목 로딩됨")
+    
+    # 범위 슬라이더 (전수조사용)
+    start_idx, end_idx = st.sidebar.select_slider(
+        "검사 구간 선택 (한 번에 300개 권장)",
+        options=range(0, len(full_list) + 1, 50),
+        value=(0, 200)
+    )
+    st.sidebar.info(f"현재 {start_idx}~{end_idx}번 구간 분석 중")
+    
+except:
+    st.error("데이터 로딩 실패")
+    st.stop()
+
+# --- 분석 로직 ---
+def analyze_stock_v13(ticker, name, country, market_cap):
     try:
-        # 1. 재무 데이터 가져오기 (시간 소요됨)
-        stock = yf.Ticker(ticker)
-        info = stock.info
+        # 1. 데이터 다운로드 (최근 3개월)
+        df = yf.download(ticker, period="3mo", progress=False)
         
-        # 데이터가 비어있으면 패스
-        if not info: return None
+        if isinstance(df.columns, pd.MultiIndex):
+            df.columns = df.columns.get_level_values(0)
+            
+        if len(df) < 20: return None
 
-        # 2. 핵심 지표 추출
-        market_cap = info.get('marketCap', 0)      # 시가총액
-        revenue_growth = info.get('revenueGrowth', 0) # 매출성장률 (YoY)
-        profit_margins = info.get('profitMargins', 0) # 순이익률
-        roe = info.get('returnOnEquity', 0)        # 자기자본이익률 (효율성)
-        debt_to_equity = info.get('debtToEquity', 0) # 부채비율
-        per = info.get('trailingPE', 0)            # 주가수익비율
+        close = df['Close']
+        volume = df['Volume']
+        curr_price = close.iloc[-1]
         
-        current_price = info.get('currentPrice', 0)
-        target_price = info.get('targetMeanPrice', 0) # 증권사 목표가 평균
+        # 2. 기초 필터 (거래량 0이거나 너무 비싼 주식 제외)
+        if volume.iloc[-1] == 0: return None
+        if country == "US" and curr_price > 300: return None # 미국 대형주 제외
 
-        # 3. 1차 필터링 (사용자 설정 기준)
-        # 매출 성장이 너무 낮거나, 부채가 너무 많으면 탈락
-        if revenue_growth < (min_growth / 100): return None
-        if debt_to_equity > max_debt: return None
-        if market_cap == 0: return None
+        # 3. 핵심 지표 계산
+        # 거래량 비율
+        vol_avg = volume.iloc[-20:-1].mean()
+        vol_ratio = volume.iloc[-1] / vol_avg if vol_avg > 0 else 0
+        
+        # 가격 변동 (1주)
+        price_change = (curr_price - close.iloc[-5]) / close.iloc[-5] * 100
+        
+        # 신고가 여부
+        is_high = curr_price >= close.max() * 0.95
 
-        # 4. 차트 데이터 (최근 추세 확인용)
-        hist = stock.history(period="1mo")
-        if len(hist) < 5: return None
-        
-        price_change_1m = (hist['Close'].iloc[-1] - hist['Close'].iloc[0]) / hist['Close'].iloc[0] * 100
-        
-        # 5. 점수 계산 (펀더멘털 점수)
-        score = 0
+        # 4. [등급 분류] 여기가 핵심입니다!
+        stock_grade = "NORMAL" # 기본은 일반
         reasons = []
 
-        # [성장성] 매출이 폭발적으로 느는가?
-        if revenue_growth > 0.3: # 30% 이상 성장
-            score += 30
-            reasons.append("고성장(30%↑)")
-        elif revenue_growth > 0.15:
-            score += 15
-            reasons.append("성장세")
-
-        # [수익성] 돈을 잘 남기는가?
-        if profit_margins > 0.2: # 마진율 20% 이상 (알짜)
-            score += 20
-            reasons.append("고마진(20%↑)")
+        # VIP 조건 (텐배거 후보): 시총 작음 + 거래량 폭발 + 상승세
+        is_small_cap = False
+        if market_cap > 0:
+            if country == "KR" and market_cap <= (vip_cap_limit * 100000000): is_small_cap = True
+            elif country == "US" and market_cap <= (vip_cap_limit * 1000000): is_small_cap = True
         
-        # [효율성] 자본 대비 돈을 잘 버는가? (ROE)
-        if roe > 0.15:
-            score += 20
-            reasons.append("ROE우수")
-
-        # [수급/추세] 주가가 오르고 있는가?
-        if price_change_1m > 10:
-            score += 15
-            reasons.append("최근상승세")
+        # 판정 로직
+        if is_small_cap and vol_ratio >= 3.0 and price_change >= 5.0:
+            stock_grade = "VIP" # 💎 텐배거 후보
+            reasons.append("★시총작음/거래량폭발")
+        elif vol_ratio >= 2.0 and price_change >= 5.0:
+            stock_grade = "HOT" # 🔥 일반 급등
+            reasons.append("수급유입")
+        elif price_change >= 10.0:
+            stock_grade = "HOT"
+            reasons.append("급등주")
             
-        # [저평가] 목표가 대비 싼가?
-        if target_price and current_price < target_price * 0.7:
-            score += 15
-            reasons.append("저평가(목표가대비)")
+        # 아무 등급도 아니면 탈락
+        if stock_grade == "NORMAL": return None
 
         # 뉴스 링크
         if country == "KR":
-            code_only = ticker.split('.')[0]
-            news_link = f"https://m.stock.naver.com/item/main.nhn?code={code_only}#/invest/financial"
+            news_link = f"https://m.stock.naver.com/item/main.nhn?code={ticker}#/news/0"
+            mkt_cap_str = f"{market_cap/100000000:.0f}억"
         else:
-            news_link = f"https://finance.yahoo.com/quote/{ticker}/financials"
+            news_link = f"https://finance.yahoo.com/quote/{ticker}/news"
+            mkt_cap_str = f"${market_cap/1000000:.1f}M"
 
         return {
-            "종목명": name,
+            "등급": stock_grade,
+            "이름": name,
             "코드": ticker,
-            "현재가": current_price,
-            "점수": score,
-            "시가총액": format_value(market_cap, "money", country),
-            "매출성장률": format_value(revenue_growth, "percent", country),
-            "영업이익률": format_value(profit_margins, "percent", country),
-            "ROE": format_value(roe, "percent", country),
-            "부채비율": f"{debt_to_equity:.0f}%" if debt_to_equity else "-",
-            "PER": f"{per:.1f}배" if per else "-",
-            "목표가": target_price if target_price else "-",
-            "특이사항": ", ".join(reasons),
-            "뉴스": news_link,
-            "국가": country
+            "현재가": f"{curr_price:,.0f}" if country=="KR" else f"${curr_price:.2f}",
+            "등락률": f"{price_change:.1f}%",
+            "거래량": f"{vol_ratio:.1f}배",
+            "시총": mkt_cap_str,
+            "이유": ", ".join(reasons),
+            "뉴스": news_link
         }
 
-    except Exception as e:
+    except:
         return None
 
-# --- 메인 실행 ---
-if st.button("🐢 정밀 분석 시작 (시간이 걸립니다)"):
-    results = []
+# --- 실행 버튼 ---
+if st.button(f"🚀 {start_idx}~{end_idx} 구간 정밀 분류 시작"):
     
-    # 1. 한국 주식 분석
-    st.info(f"🇰🇷 한국 유망주 {len(KR_TARGETS)}개 재무제표 뜯어보는 중...")
-    bar_kr = st.progress(0)
-    for i, (name, ticker) in enumerate(KR_TARGETS.items()):
-        data = analyze_deep(name, ticker, "KR")
-        if data: results.append(data)
-        bar_kr.progress((i + 1) / len(KR_TARGETS))
-    bar_kr.empty()
-
-    # 2. 미국 주식 분석 (나스닥 상위)
-    st.info(f"🇺🇸 나스닥/S&P500 상위 {scan_limit}개 종목 정밀 검사 중... (약 {scan_limit*1.5}초 소요)")
-    bar_us = st.progress(0)
+    target_list = full_list.iloc[start_idx:end_idx]
     
-    try:
-        # 미국 리스트 가져오기 (S&P500 + NASDAQ 섞어서)
-        us_tickers = fdr.StockListing('NASDAQ').head(scan_limit)['Symbol'].tolist()
+    vip_results = [] # 텐배거 후보
+    hot_results = [] # 일반 급등주
+    
+    bar = st.progress(0)
+    status = st.empty()
+    
+    for i, row in enumerate(target_list.iterrows()):
+        _, data = row
         
-        for i, ticker in enumerate(us_tickers):
-            data = analyze_deep(ticker, ticker, "US")
-            if data: results.append(data)
-            bar_us.progress((i + 1) / len(us_tickers))
+        if market == "코스닥 (KOSDAQ)":
+            name = data['Name']
+            ticker = data['Code']
+            # FDR 데이터프레임에 Marcap(시가총액)이 있는지 확인
+            mkt_cap = data['Marcap'] if 'Marcap' in data else 0
             
-    except Exception as e:
-        st.error(f"미국 데이터 로딩 중 에러: {e}")
+            if not ticker.endswith(".KQ"): ticker = f"{ticker}.KQ"
+            country = "KR"
+        else:
+            name = data['Name']
+            ticker = data['Symbol']
+            # 나스닥은 FDR 리스트에 시총 정보가 없을 수 있음 (0으로 처리 후 yf에서 받으면 느리니 일단 패스)
+            mkt_cap = 0 
+            country = "US"
+            
+        status.write(f"판독 중: {name}")
         
-    bar_us.empty()
-
-    # --- 결과 리포트 출력 ---
-    if results:
-        df = pd.DataFrame(results)
-        df = df.sort_values(by="점수", ascending=False)
+        res = analyze_stock_v13(ticker, name, country, mkt_cap)
         
-        st.success(f"✅ 분석 완료! 총 {len(df)}개의 알짜 기업을 찾았습니다.")
-
-        # 1. 엑셀 스타일 요약표
-        st.subheader("📊 재무제표 기반 랭킹 (Top 20)")
-        
-        # 보여줄 컬럼만 선택
-        display_cols = ["종목명", "현재가", "점수", "시가총액", "매출성장률", "영업이익률", "ROE", "부채비율", "특이사항"]
-        st.dataframe(
-            df[display_cols].head(20).style.background_gradient(subset=["점수"], cmap="YlGn"),
-            use_container_width=True,
-            hide_index=True
-        )
-        
-        st.markdown("---")
-
-        # 2. 상세 리포트 (확장형)
-        st.subheader("📑 종목별 상세 리포트")
-        
-        for i, row in df.head(10).iterrows(): # 상위 10개만 디테일하게
-            with st.expander(f"🏆 {row['종목명']} ({row['점수']}점) - 자세히 보기"):
-                c1, c2, c3 = st.columns(3)
+        if res:
+            if res['등급'] == "VIP":
+                vip_results.append(res)
+            else:
+                hot_results.append(res)
                 
-                with c1:
-                    st.markdown("**💰 가격 & 가치**")
-                    st.write(f"현재가: **{row['현재가']:,.0f}**" if row['국가']=="KR" else f"현재가: **${row['현재가']:.2f}**")
-                    st.write(f"시가총액: {row['시가총액']}")
-                    st.write(f"PER (주가수익비율): {row['PER']}")
-                    st.write(f"증권사 목표가: {row['목표가']}")
-                
-                with c2:
-                    st.markdown("**📈 성장성 & 수익성**")
-                    # 색상 강조
-                    growth_color = "green" if "30%" in str(row['매출성장률']) else "black"
-                    st.markdown(f"매출성장률: :{growth_color}[{row['매출성장률']}]")
-                    st.write(f"영업이익률: {row['영업이익률']}")
-                    st.write(f"ROE (자기자본이익률): {row['ROE']}")
-                
-                with c3:
-                    st.markdown("**🛡️ 재무 건전성**")
-                    debt_color = "red" if int(row['부채비율'].replace('%','')) > 200 else "blue"
-                    st.markdown(f"부채비율: :{debt_color}[{row['부채비율']}]")
-                    st.markdown(f"[🔗 네이버/야후 재무정보 확인]({row['뉴스']})")
-                    st.info(f"💡 핵심 포인트: {row['특이사항']}")
+        bar.progress((i + 1) / len(target_list))
+        
+    bar.empty()
+    status.empty()
 
+    # --- 결과 출력 (분리해서 보여줌) ---
+    
+    # 1. 💎 VIP 섹션 (가장 중요)
+    st.markdown("## 💎 텐배거 VIP 후보 (집중 관찰)")
+    st.info("조건: 시가총액이 작고(가볍고), 거래량이 3배 이상 터진 '폭등 전조' 종목")
+    
+    if vip_results:
+        for row in vip_results:
+            # 붉은색 박스로 강조 (error 메시지 활용)
+            with st.error(f"💎 {row['이름']} ({row['코드']})"):
+                c1, c2, c3 = st.columns([2, 2, 1])
+                c1.write(f"💰 가격: **{row['현재가']}** ({row['등락률']})")
+                c1.write(f"📊 시총: **{row['시총']}** (가벼움!)")
+                c2.write(f"🔥 거래량: 평소의 **{row['거래량']}**")
+                c2.write(f"💡 이유: {row['이유']}")
+                c3.markdown(f"[⚡뉴스확인]({row['뉴스']})")
     else:
-        st.warning("설정하신 조건(성장률 등)이 너무 까다로워서 통과한 기업이 없습니다. 사이드바에서 조건을 조금 낮춰보세요.")
+        st.write("이 구간에는 '완벽한 텐배거 조건'을 갖춘 종목이 없습니다.")
+
+    st.divider()
+
+    # 2. 🔥 일반 급등주 섹션
+    st.markdown("### 🔥 급등 신호 발생 (일반)")
+    st.caption("시총이 조금 크거나, 조건이 약간 부족하지만 상승세인 종목들")
+    
+    if hot_results:
+        df_hot = pd.DataFrame(hot_results)
+        # 테이블로 깔끔하게 보여주기
+        st.dataframe(
+            df_hot[["이름", "현재가", "등락률", "거래량", "시총", "이유"]],
+            use_container_width=True
+        )
+    else:
+        st.write("급등 신호 종목이 없습니다.")
+
