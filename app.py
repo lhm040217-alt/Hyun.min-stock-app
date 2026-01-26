@@ -7,8 +7,8 @@ import numpy as np
 from datetime import datetime, timedelta
 
 # --- 페이지 설정 ---
-st.set_page_config(page_title="Tenbagger V48 (Sniper)", layout="wide")
-st.title("🔫 텐배거 V48 (The Sniper)")
+st.set_page_config(page_title="Tenbagger V49 (Sniper)", layout="wide")
+st.title("🔫 텐배거 V49 (The Sniper)")
 st.markdown("""
 **"이미 오른 건 안 삽니다. 오르기 직전, 잔뜩 웅크린 놈을 잡습니다."**
 1.  **스퀴즈(Squeeze):** 볼린저 밴드가 좁아진 종목 (에너지 응축).
@@ -45,7 +45,6 @@ KOSDAQ_EMERGENCY_LIST = [
 ]
 
 # --- [수정됨] 엄격한 테마 키워드 ---
-# 일반 명사(Energy, Defense) 삭제 -> 구체적 명사로 변경
 THEME_KEYWORDS = {
     "🚀우주/방산": ["Spacecraft", "Satellite", "Rocket", "Missile", "Aerospace", "Defense System", "Weapon", "Warfare", "우주", "위성", "방산"],
     "🤖AI/로봇": ["Robotics", "Artificial Intelligence", "NPU", "Deep Learning", "Humanoid", "Autonomous", "로봇", "인공지능"],
@@ -58,7 +57,7 @@ THEME_KEYWORDS = {
 }
 
 # --- 설정 패널 ---
-st.sidebar.header("🛠 설정 (V48 Sniper)")
+st.sidebar.header("🛠 설정 (V49 Sniper)")
 market_type = st.sidebar.radio("시장", ["나스닥 (NASDAQ)", "코스닥/코스피 (KRX)"])
 
 icon, status, desc = check_market_status(market_type)
@@ -102,17 +101,13 @@ except Exception as e:
     st.error(f"오류: {e}")
     st.stop()
 
-# --- 분석 로직 (수정됨: 엄격한 키워드 매칭) ---
+# --- 분석 로직 (V49: 스팩 제거 + 엄격한 키워드) ---
 def analyze_stock_v48(ticker, name, country, squeeze_limit, cap_limit):
-    def analyze_stock_v48(ticker, name, country, squeeze_limit, cap_limit):
     try:
-        # [추가] 스팩(SPAC) 및 인수목적 회사 제거
+        # [NEW] 스팩(SPAC) 및 인수목적 회사 필터링
         if "Acquisition" in name or "ACQUISITION" in name.upper(): return None
+        if "Blank Check" in name: return None
         
-        stock = yf.Ticker(ticker)
-        # ... (나머지 코드 그대로)
-
-    try:
         stock = yf.Ticker(ticker)
         
         # 1. 차트 데이터
@@ -157,10 +152,9 @@ def analyze_stock_v48(ticker, name, country, squeeze_limit, cap_limit):
 
         info = stock.info
         
-        # [수정됨] 테마 분석 로직 (섹터 필터링 추가)
+        # [수정됨] 테마 분석 로직 (섹터 필터링)
         theme_detected = "기타"
         
-        # 기업 정보 수집 (섹터 + 산업 + 설명)
         sec = info.get('sector', '').lower()
         ind = info.get('industry', '').lower()
         summ = info.get('longBusinessSummary', '').lower()
@@ -168,14 +162,8 @@ def analyze_stock_v48(ticker, name, country, squeeze_limit, cap_limit):
         full_text = f"{sec} {ind} {summ}"
         
         for theme, keywords in THEME_KEYWORDS.items():
-            # [안전장치] 섹터가 맞지 않으면 특정 테마는 스킵
-            # 1. 헬스케어/바이오 섹터인데 '방산' 테마 검사 중이면 건너뜀 (Immune Defense 오탐지 방지)
-            if "healthcare" in sec and "방산" in theme:
-                continue
-            
-            # 2. 소비재(음식/식당) 섹터인데 '에너지' 테마 검사 중이면 건너뜀 (Wendy's 오탐지 방지)
-            if ("consumer" in sec or "restaurant" in ind) and "에너지" in theme:
-                continue
+            if "healthcare" in sec and "방산" in theme: continue
+            if ("consumer" in sec or "restaurant" in ind) and "에너지" in theme: continue
                 
             for kw in keywords:
                 if kw.lower() in full_text:
@@ -220,10 +208,10 @@ def analyze_stock_v48(ticker, name, country, squeeze_limit, cap_limit):
         return None
 
 # --- 실행 ---
-if "scan_results_v48" not in st.session_state:
-    st.session_state.scan_results_v48 = None
+if "scan_results_v49" not in st.session_state:
+    st.session_state.scan_results_v49 = None
 
-if st.button(f"🔫 V48 폭발 징후 포착 ({start_idx}~{end_idx})"):
+if st.button(f"🔫 V49 폭발 징후 포착 ({start_idx}~{end_idx})"):
     
     target_slice = full_list.iloc[start_idx:end_idx]
     results = []
@@ -274,13 +262,13 @@ if st.button(f"🔫 V48 폭발 징후 포착 ({start_idx}~{end_idx})"):
         df = pd.DataFrame(results)
         df = df.sort_values("정렬용")
         
-        st.session_state.scan_results_v48 = df
+        st.session_state.scan_results_v49 = df
         st.success(f"🔫 포착 완료! {len(results)}개의 응축 종목을 찾았습니다.")
     else:
         st.warning("조건에 맞는 종목이 없습니다. (응축 강도를 조금 높여보세요.)")
 
-if st.session_state.scan_results_v48 is not None:
-    df_show = st.session_state.scan_results_v48
+if st.session_state.scan_results_v49 is not None:
+    df_show = st.session_state.scan_results_v49
     
     st.dataframe(
         df_show[["등급", "테마", "이름", "현재가", "흐름", "특이사항", "🎯목표가", "🛡️손절가", "뉴스링크"]],
