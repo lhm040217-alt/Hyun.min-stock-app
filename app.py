@@ -4,16 +4,35 @@ import FinanceDataReader as fdr
 import pandas as pd
 import time
 import numpy as np
+from datetime import datetime, timedelta
 
 # --- 페이지 설정 ---
-st.set_page_config(page_title="Tenbagger V42 (Perfect Match)", layout="wide")
-st.title("👑 텐배거 V42 (무결점 최종판)")
+st.set_page_config(page_title="Tenbagger V43 (The Final)", layout="wide")
+st.title("👑 텐배거 V43 (The Final)")
 st.markdown("""
-**"오류를 수정하고 완벽해졌습니다."**
-1.  **전수조사 완벽 구현:** 코스피(.KS)와 코스닥(.KQ)을 정확히 구분하여 **단 하나의 종목도 놓치지 않습니다.**
-2.  **핀포인트 테마:** 원하는 테마를 선택하면, 조건이 조금 부족해도 일단 찾아서 보여줍니다.
-3.  **철통 보안:** 손절가(-3%), 목표가(+10%), RSI 과열 경고, 뉴스 확인 링크 탑재.
+**"시장 파악부터 종목 발굴, 결과 저장까지."**
+1.  **🚦 시장 신호등:** 오늘이 매수해도 되는 날인지 지수를 먼저 체크합니다.
+2.  **📉 미니 차트:** 표 안에서 최근 1달간의 주가 흐름을 바로 확인합니다.
+3.  **💾 엑셀 저장:** 소중한 발굴 리스트를 파일로 저장하세요.
 """)
+
+# --- [기능 1] 시장 신호등 로직 ---
+def check_market_status(market_type):
+    try:
+        # 코스피(KS11) 또는 나스닥(IXIC) 지수 확인
+        symbol = "IXIC" if "나스닥" in market_type else "KS11"
+        df = fdr.DataReader(symbol, start=(datetime.now() - timedelta(days=60)))
+        
+        curr_idx = df['Close'].iloc[-1]
+        ma20 = df['Close'].rolling(20).mean().iloc[-1]
+        
+        # 20일 이동평균선 위에 있으면 상승장(안전), 아래면 하락장(주의)
+        if curr_idx > ma20:
+            return "🟢", "상승 추세 (매수 가능 구간)", f"지수가 20일선 위에 있습니다. ({symbol})"
+        else:
+            return "🔴", "하락/조정 추세 (매수 주의)", f"지수가 20일선 아래입니다. 비중을 줄이세요. ({symbol})"
+    except:
+        return "⚪", "시장 데이터 수신 불가", "지수 데이터를 가져오지 못했습니다."
 
 # --- 비상용 리스트 ---
 KOSDAQ_EMERGENCY_LIST = [
@@ -29,7 +48,7 @@ KOSDAQ_EMERGENCY_LIST = [
     "298040", "001440", "010120", "034020", "052690", "032820", "083650"
 ]
 
-# --- 테마 키워드 (Deep Scan) ---
+# --- 테마 키워드 ---
 THEME_KEYWORDS = {
     "🚀우주/방산": ["Space", "Satellite", "Rocket", "Defense", "Weapon", "Aerospace", "우주", "위성", "방산", "전쟁", "Aviation"],
     "🤖AI/로봇": ["AI", "Robot", "Artificial Intelligence", "NPU", "Deep Learning", "로봇", "인공지능", "휴머노이드", "Automation"],
@@ -42,8 +61,12 @@ THEME_KEYWORDS = {
 }
 
 # --- 설정 패널 ---
-st.sidebar.header("🛠 설정 (V42 Perfect)")
+st.sidebar.header("🛠 설정 (V43 The Final)")
 market_type = st.sidebar.radio("시장", ["나스닥 (NASDAQ)", "코스닥/코스피 (KRX)"])
+
+# [기능 1] 시장 신호등 표시
+icon, status, desc = check_market_status(market_type)
+st.info(f"🚦 **오늘의 시장 신호: {icon} {status}**\n\n*{desc}*")
 
 @st.cache_data
 def load_data(m_type):
@@ -51,19 +74,18 @@ def load_data(m_type):
         if "나스닥" in m_type:
             return fdr.StockListing('NASDAQ'), "FULL"
         else:
-            # KRX 전체 (코스피+코스닥)
             return fdr.StockListing('KRX'), "FULL"
     except Exception:
         data = [{'Code': code, 'Name': f"종목_{code}", 'Market': 'KOSDAQ'} for code in KOSDAQ_EMERGENCY_LIST]
         return pd.DataFrame(data), "EMERGENCY"
 
 try:
-    with st.spinner("거래소 데이터 정밀 로딩 중..."):
-        full_list, status = load_data(market_type)
+    with st.spinner("거래소 데이터 로딩 중..."):
+        full_list, list_status = load_data(market_type)
         total_len = len(full_list)
         
-    if status == "EMERGENCY":
-        st.warning("⚠️ 비상용 리스트 모드로 전환됨")
+    if list_status == "EMERGENCY":
+        st.warning("⚠️ 비상용 리스트 모드")
         start_idx, end_idx = 0, total_len
     else:
         c1, c2 = st.sidebar.columns(2)
@@ -72,7 +94,6 @@ try:
         
     vip_cap_limit = st.sidebar.number_input("시총 상한(억/M달러)", value=30000)
     
-    # 테마 필터
     st.sidebar.markdown("---")
     st.sidebar.subheader("🎯 핀포인트 테마")
     theme_options = list(THEME_KEYWORDS.keys()) + ["기타"]
@@ -82,7 +103,7 @@ try:
     strict_mode = st.sidebar.checkbox("🔒 엄격한 기준 (매출20% + 신고가)", value=True)
 
 except Exception as e:
-    st.error(f"오류 발생: {e}")
+    st.error(f"오류: {e}")
     st.stop()
 
 # --- RSI 계산 ---
@@ -93,12 +114,12 @@ def calculate_rsi(data, window=14):
     rs = gain / loss
     return 100 - (100 / (1 + rs))
 
-# --- [핵심] 정밀 분석 로직 ---
-def analyze_stock_v42(ticker, name, country, strict, specific_theme_mode):
+# --- 분석 로직 ---
+def analyze_stock_v43(ticker, name, country, strict, specific_theme_mode):
     try:
         stock = yf.Ticker(ticker)
         
-        # 1. 기술적 필터 (차트)
+        # 1. 기술적 필터 & 차트 데이터
         df = stock.history(period="1y")
         if len(df) < 60: return None
         if df['Volume'].iloc[-1] == 0: return None
@@ -106,14 +127,16 @@ def analyze_stock_v42(ticker, name, country, strict, specific_theme_mode):
         curr_price = df['Close'].iloc[-1]
         high_52w = df['Close'].max()
         
-        # [유연한 필터] 특정 테마를 선택했다면, 신고가 조건이 조금 모자라도 통과시킴 (놓치지 않기 위해)
+        # [기능 2] 미니 차트용 데이터 (최근 30일)
+        mini_chart_data = df['Close'].tail(30).tolist()
+        
         if strict and not specific_theme_mode:
             if curr_price < high_52w * 0.85: return None 
         
         df['RSI'] = calculate_rsi(df['Close'])
         rsi_val = df['RSI'].iloc[-1]
         
-        # 2. 퀀트 필터 (시총)
+        # 2. 퀀트 필터
         try:
             fast_info = stock.fast_info
             mkt_cap = fast_info['market_cap']
@@ -121,10 +144,8 @@ def analyze_stock_v42(ticker, name, country, strict, specific_theme_mode):
             
         if country == "KR":
             mkt_cap_val = mkt_cap / 100000000 
-            # 하한선 300억으로 더 완화 (알짜 소형주 포착)
             if not (300 <= mkt_cap_val <= vip_cap_limit): return None
             mkt_str = f"{mkt_cap_val:.0f}억"
-            
             code_pure = ticker.replace(".KQ", "").replace(".KS", "")
             news_url = f"https://m.stock.naver.com/item/main.nhn?code={code_pure}#/news/0"
         else:
@@ -134,8 +155,6 @@ def analyze_stock_v42(ticker, name, country, strict, specific_theme_mode):
             news_url = f"https://finance.yahoo.com/quote/{ticker}/news"
 
         info = stock.info
-        
-        # [유연한 필터] 특정 테마를 선택했다면 매출 성장 조건도 살짝 눈감아줌
         rev_growth = info.get('revenueGrowth', 0)
         if rev_growth is None: rev_growth = 0
         if strict and not specific_theme_mode and rev_growth < 0.20: return None 
@@ -176,7 +195,6 @@ def analyze_stock_v42(ticker, name, country, strict, specific_theme_mode):
             score += 1
             bonus_tags.append("🚀주도주")
         
-        # 테마 정밀 분석
         theme_detected = "기타"
         summary = (info.get('longBusinessSummary', '') + " " + info.get('industry', '')).lower()
         for theme, keywords in THEME_KEYWORDS.items():
@@ -211,6 +229,7 @@ def analyze_stock_v42(ticker, name, country, strict, specific_theme_mode):
             "테마": theme_detected,
             "이름": real_name,
             "현재가": f"{curr_price:,.0f}" if country=="KR" else f"${curr_price:.2f}",
+            "흐름": mini_chart_data, # 차트 데이터
             "🎯목표가": target_str,
             "🛡️손절가": stop_str,
             "매출성장": f"+{rev_growth*100:.1f}%",
@@ -223,8 +242,11 @@ def analyze_stock_v42(ticker, name, country, strict, specific_theme_mode):
     except:
         return None
 
-# --- 실행 ---
-if st.button(f"👑 V42 정밀 스캔 시작 ({start_idx}~{end_idx})"):
+# --- 실행 및 결과 저장(Session State) ---
+if "scan_results" not in st.session_state:
+    st.session_state.scan_results = None
+
+if st.button(f"👑 V43 최종 스캔 시작 ({start_idx}~{end_idx})"):
     
     target_slice = full_list.iloc[start_idx:end_idx]
     results = []
@@ -232,46 +254,34 @@ if st.button(f"👑 V42 정밀 스캔 시작 ({start_idx}~{end_idx})"):
     progress_bar = st.progress(0)
     status_text = st.empty()
     
-    # 테마 선택 여부 확인 (있으면 유연한 모드 적용)
     specific_theme_mode = len(selected_themes) > 0
     theme_label = ", ".join(selected_themes) if specific_theme_mode else "전체"
     
-    st.info(f"테마: [{theme_label}] / 엄격모드: {strict_mode} / 코스피&코스닥 구분 스캔")
+    st.info(f"테마: [{theme_label}] / 시장 체크 완료")
     
     for i, row in enumerate(target_slice.iterrows()):
         idx, data = row
-        
-        # [수정된 핵심 로직] 코스피/코스닥 정확한 구분
         if "나스닥" in market_type:
             ticker = data['Symbol']
             name = data['Name']
             country = "US"
         else:
-            # KRX Listing에서 Market 정보 활용 (가장 중요!)
             ticker = data['Code']
-            market = data.get('Market', 'KOSDAQ') # 기본값 코스닥
-            
-            # yfinance 호환 접미사 붙이기
-            if market == 'KOSPI':
-                ticker += ".KS"
-            elif market == 'KOSDAQ':
-                ticker += ".KQ"
-            else:
-                # KONEX 등은 제외하거나 코스닥으로 처리
+            market = data.get('Market', 'KOSDAQ')
+            if market == 'KOSPI': ticker += ".KS"
+            elif market == 'KOSDAQ': ticker += ".KQ"
+            else: 
                 if ticker.isdigit(): ticker += ".KQ"
-
             name = data['Name']
             country = "KR"
             
-        status_text.text(f"🔍 정밀검사 [{i+1}/{len(target_slice)}]: {name} ({ticker})")
+        status_text.text(f"🔍 스캔중 [{i+1}/{len(target_slice)}]: {name}")
         
-        # 안전 딜레이 (0.05초로 단축, 효율성 증대)
         time.sleep(0.05)
         
-        res = analyze_stock_v42(ticker, name, country, strict_mode, specific_theme_mode)
+        res = analyze_stock_v43(ticker, name, country, strict_mode, specific_theme_mode)
         
         if res:
-            # 테마 필터링
             if specific_theme_mode:
                 if res['테마'] in selected_themes:
                     results.append(res)
@@ -303,20 +313,38 @@ if st.button(f"👑 V42 정밀 스캔 시작 ({start_idx}~{end_idx})"):
                 if row['이름'] == theme_leaders[t]: df.at[index, '관련_대장주'] = "👑대장"
                 else: df.at[index, '관련_대장주'] = theme_leaders[t]
 
-        # 정렬
         grade_order = {"👑S급(텐배거)": 0, "💎A급": 1, "B급": 2}
         df["우선순위"] = df["등급"].map(grade_order)
         df = df.sort_values("우선순위").drop(columns=["우선순위"])
-
-        st.success(f"👑 스캔 완료! 총 {len(results)}개 발굴")
         
-        st.dataframe(
-            df[["등급", "테마", "관련_대장주", "이름", "현재가", "🎯목표가", "🛡️손절가", "RSI", "수급/특이", "뉴스링크"]],
-            column_config={
-                "뉴스링크": st.column_config.LinkColumn("팩트체크", display_text="👉뉴스확인")
-            },
-            use_container_width=True,
-            height=800
-        )
+        # 결과 세션 저장
+        st.session_state.scan_results = df
+        st.success(f"👑 발굴 완료! {len(results)}개 종목이 저장되었습니다.")
     else:
-        st.warning(f"선택한 조건/테마에 맞는 종목이 없습니다. '엄격한 기준'을 끄거나 다른 테마를 선택해보세요.")
+        st.warning("조건에 맞는 종목이 없습니다.")
+
+# --- 결과 출력 및 엑셀 다운로드 (저장된 데이터 표시) ---
+if st.session_state.scan_results is not None:
+    df_show = st.session_state.scan_results
+    
+    # [기능 3] 엑셀 다운로드 버튼
+    csv = df_show.to_csv(index=False).encode('utf-8-sig')
+    st.download_button(
+        label="💾 결과 엑셀로 저장하기",
+        data=csv,
+        file_name='tenbagger_list.csv',
+        mime='text/csv',
+    )
+    
+    # [기능 2] 미니 차트 포함 테이블 출력
+    st.dataframe(
+        df_show[["등급", "테마", "관련_대장주", "이름", "현재가", "흐름", "🎯목표가", "🛡️손절가", "RSI", "수급/특이", "뉴스링크"]],
+        column_config={
+            "흐름": st.column_config.LineChartColumn(
+                "최근 30일 추세", width="medium", y_min=0, y_max=None
+            ),
+            "뉴스링크": st.column_config.LinkColumn("팩트체크", display_text="👉뉴스확인")
+        },
+        use_container_width=True,
+        height=800
+    )
