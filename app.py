@@ -170,4 +170,120 @@ def analyze_stock_v48(ticker, name, country, squeeze_limit, cap_limit):
                     theme_detected = theme
                     break
             if theme_detected != "기타": break
+            
+        # 등급 부여
+        final_grade = "💣폭발대기"
+        
+        # 거래량이 말라있으면(평소의 70% 이하) 더 좋음 (폭풍전야)
+        vol_avg = df['Volume'].iloc[-20:-1].mean()
+        vol_now = df['Volume'].iloc[-1]
+        
+        reasons = [f"밴드폭{bandwidth:.1f}%"]
+        
+        if vol_now < vol_avg * 0.7:
+            final_grade = "🎯스나이퍼픽"
+            reasons.append("🤫거래량급감")
+            
+        mini_chart_data = df['Close'].tail(30).tolist()
+        
+        # 목표가는 밴드 상단 돌파 시 슈팅 기대
+        target_price = df['Upper'].iloc[-1] * 1.1 # 상단 뚫고 10% 더
+        # 손절가는 밴드 하단 이탈 시
+        stop_price = df['Lower'].iloc[-1] * 0.98 
+        
+        if country == "KR":
+            target_str = f"{target_price:,.0f}"
+            stop_str = f"{stop_price:,.0f}"
+        else:
+            target_str = f"${target_price:.2f}"
+            stop_str = f"${stop_price:.2f}"
 
+        return {
+            "등급": final_grade,
+            "테마": theme_detected,
+            "이름": info.get('longName', name),
+            "현재가": f"{curr_price:,.0f}" if country=="KR" else f"${curr_price:.2f}",
+            "흐름": mini_chart_data,
+            "특이사항": " ".join(reasons),
+            "🎯목표가": target_str,
+            "🛡️손절가": stop_str, # 이게 깨지면 응축이 아니라 하락임
+            "뉴스링크": news_url,
+            "정렬용": bandwidth # 밴드폭 좁은 순으로 정렬
+        }
+
+    except:
+        return None
+
+# --- 실행 ---
+if "scan_results_v48" not in st.session_state:
+    st.session_state.scan_results_v48 = None
+
+if st.button(f"🔫 V48 폭발 징후 포착 ({start_idx}~{end_idx})"):
+    
+    target_slice = full_list.iloc[start_idx:end_idx]
+    results = []
+    
+    progress_bar = st.progress(0)
+    status_text = st.empty()
+    
+    specific_theme_mode = len(selected_themes) > 0
+    theme_label = ", ".join(selected_themes) if specific_theme_mode else "전체"
+    
+    st.info(f"조건: 밴드폭 {squeeze_threshold}% 이하 + 20일선 지지 | 테마: {theme_label}")
+    
+    for i, row in enumerate(target_slice.iterrows()):
+        idx, data = row
+        if "나스닥" in market_type:
+            ticker = data['Symbol']
+            name = data['Name']
+            country = "US"
+        else:
+            ticker = data['Code']
+            market = data.get('Market', 'KOSDAQ')
+            if market == 'KOSPI': ticker += ".KS"
+            elif market == 'KOSDAQ': ticker += ".KQ"
+            else: 
+                if ticker.isdigit(): ticker += ".KQ"
+            name = data['Name']
+            country = "KR"
+            
+        status_text.text(f"🔫 조준 중... [{i+1}/{len(target_slice)}]: {name}")
+        
+        time.sleep(0.01)
+        
+        res = analyze_stock_v48(ticker, name, country, squeeze_threshold, vip_cap_limit)
+        
+        if res:
+            if specific_theme_mode:
+                if res['테마'] in selected_themes:
+                    results.append(res)
+            else:
+                results.append(res)
+        
+        progress_bar.progress((i + 1) / len(target_slice))
+
+    status_text.empty()
+    progress_bar.empty()
+    
+    if results:
+        df = pd.DataFrame(results)
+        # 밴드폭이 좁은 순서대로 정렬 (가장 응축된 놈이 1등)
+        df = df.sort_values("정렬용")
+        
+        st.session_state.scan_results_v48 = df
+        st.success(f"🔫 포착 완료! {len(results)}개의 응축 종목을 찾았습니다.")
+    else:
+        st.warning("조건에 맞는 종목이 없습니다. (응축 강도를 조금 높여보세요.)")
+
+if st.session_state.scan_results_v48 is not None:
+    df_show = st.session_state.scan_results_v48
+    
+    st.dataframe(
+        df_show[["등급", "테마", "이름", "현재가", "흐름", "특이사항", "🎯목표가", "🛡️손절가", "뉴스링크"]],
+        column_config={
+            "흐름": st.column_config.LineChartColumn("최근 흐름"),
+            "뉴스링크": st.column_config.LinkColumn("팩트체크", display_text="👉뉴스확인")
+        },
+        use_container_width=True,
+        height=800
+    )
