@@ -44,16 +44,17 @@ KOSDAQ_EMERGENCY_LIST = [
     "298040", "001440", "010120", "034020", "052690", "032820", "083650"
 ]
 
-# --- 테마 키워드 ---
+# --- [수정됨] 엄격한 테마 키워드 ---
+# 일반 명사(Energy, Defense) 삭제 -> 구체적 명사로 변경
 THEME_KEYWORDS = {
-    "🚀우주/방산": ["Space", "Satellite", "Rocket", "Defense", "Weapon", "Aerospace", "우주", "위성", "방산", "전쟁"],
-    "🤖AI/로봇": ["AI", "Robot", "Artificial Intelligence", "NPU", "Deep Learning", "로봇", "인공지능", "휴머노이드"],
-    "🧬바이오/헬스": ["Bio", "Drug", "Pharma", "Cancer", "Therapeutics", "Clinical", "Genomic", "바이오", "신약", "임상", "비만"],
-    "🔋2차전지/에너지": ["Battery", "Lithium", "Cathode", "EV", "Energy", "Solar", "배터리", "리튬", "양극재", "전고체"],
-    "💾반도체": ["Semiconductor", "Chip", "Foundry", "HBM", "Memory", "반도체", "팹리스", "유리기판"],
-    "💎자원/광물": ["Mining", "Metals", "Gold", "Silver", "Mineral", "Rare Earth", "Polymetallic", "Antimony", "광물", "자원", "구리"],
-    "☁️SW/플랫폼": ["Software", "SaaS", "Platform", "Cloud", "Cyber", "Data", "Security", "플랫폼", "보안", "웹툰"],
-    "🏦금융/은행": ["Bank", "Financial", "Capital", "Insurance", "Invest", "Holding", "Bancorp", "Finance", "지주"],
+    "🚀우주/방산": ["Spacecraft", "Satellite", "Rocket", "Missile", "Aerospace", "Defense System", "Weapon", "Warfare", "우주", "위성", "방산"],
+    "🤖AI/로봇": ["Robotics", "Artificial Intelligence", "NPU", "Deep Learning", "Humanoid", "Autonomous", "로봇", "인공지능"],
+    "🧬바이오/헬스": ["Biotech", "Pharma", "Therapeutics", "Clinical", "Genomic", "Oncology", "Drug", "Healthcare", "바이오", "신약", "임상"],
+    "🔋2차전지/에너지": ["Lithium", "Cathode", "Anode", "Electric Vehicle", "EV Battery", "Solar Power", "Renewable Energy", "Wind Power", "Energy Storage", "배터리", "리튬", "양극재"],
+    "💾반도체": ["Semiconductor", "Foundry", "HBM", "Memory Chip", "Fabless", "Wafer", "Processors", "반도체", "팹리스"],
+    "💎자원/광물": ["Mining", "Precious Metal", "Mineral Resource", "Rare Earth", "Copper", "Gold Mine", "광물", "자원", "채굴"],
+    "☁️SW/플랫폼": ["SaaS", "Cybersecurity", "Cloud Computing", "Data Center", "Software", "IT Services", "플랫폼", "보안", "클라우드"],
+    "🏦금융/은행": ["Banking", "Insurance", "Investment Services", "Financial Services", "Bancorp", "Asset Management", "지주", "은행", "금융"],
 }
 
 # --- 설정 패널 ---
@@ -90,7 +91,6 @@ try:
     st.sidebar.markdown("---")
     vip_cap_limit = st.sidebar.number_input("시총 상한(억/M달러)", value=30000)
     
-    # [NEW] 응축 강도 설정
     st.sidebar.markdown("---")
     squeeze_threshold = st.sidebar.slider("응축 강도 (낮을수록 폭발 임박)", 5, 20, 10)
     st.sidebar.caption("볼린저 밴드 폭(%)입니다. 10% 이하면 정말 꽉 눌린 상태입니다.")
@@ -102,44 +102,32 @@ except Exception as e:
     st.error(f"오류: {e}")
     st.stop()
 
-# --- 분석 로직 (볼린저 밴드 스퀴즈) ---
+# --- 분석 로직 (수정됨: 엄격한 키워드 매칭) ---
 def analyze_stock_v48(ticker, name, country, squeeze_limit, cap_limit):
     try:
         stock = yf.Ticker(ticker)
         
-        # 1. 차트 데이터 (최근 3개월, 볼린저밴드 계산용)
+        # 1. 차트 데이터
         df = stock.history(period="3mo")
         if len(df) < 20: return None
         if df['Volume'].iloc[-1] == 0: return None
 
         curr_price = df['Close'].iloc[-1]
         
-        # === [핵심 알고리즘: 볼린저 밴드 계산] ===
-        # 20일 이동평균
+        # 볼린저 밴드 계산
         df['MA20'] = df['Close'].rolling(window=20).mean()
-        # 표준편차
         df['STD'] = df['Close'].rolling(window=20).std()
-        # 상단/하단 밴드
         df['Upper'] = df['MA20'] + (df['STD'] * 2)
         df['Lower'] = df['MA20'] - (df['STD'] * 2)
         
-        # [Bandwidth] 밴드폭 계산: (상단 - 하단) / 중심선 * 100
-        # 이 값이 작을수록 에너지가 응축된 것임
         bandwidth = (df['Upper'].iloc[-1] - df['Lower'].iloc[-1]) / df['MA20'].iloc[-1] * 100
         
-        # [조건 1] 응축 확인 (설정한 % 이하인가?)
-        # 예: bandwidth가 8%라면, 주가가 위아래 8% 안에서만 놀고 있다는 뜻 (극도로 조용함)
         if bandwidth > squeeze_limit: return None
-        
-        # [조건 2] 추세 확인 (20일선 위에 있는가?)
-        # 20일선 밑에서 횡보하는 건 '하락 횡보'일 수 있어서 위험. 위에서 버티는 놈이 찐임.
         if curr_price < df['MA20'].iloc[-1]: return None
         
-        # [조건 3] 이미 터진 놈 제외
-        # 오늘 이미 5% 이상 급등해버렸으면 '선취매'가 아님.
         prev_close = df['Close'].iloc[-2]
         change_pct = (curr_price - prev_close) / prev_close * 100
-        if change_pct > 5.0: return None # 이미 출발한 차는 보냄
+        if change_pct > 5.0: return None 
         
         # 2. 퀀트 필터 (시총)
         try:
@@ -161,34 +149,43 @@ def analyze_stock_v48(ticker, name, country, squeeze_limit, cap_limit):
 
         info = stock.info
         
-        # 테마 분석
+        # [수정됨] 테마 분석 로직 (섹터 필터링 추가)
         theme_detected = "기타"
-        summary = (info.get('longBusinessSummary', '') + " " + info.get('industry', '')).lower()
+        
+        # 기업 정보 수집 (섹터 + 산업 + 설명)
+        sec = info.get('sector', '').lower()
+        ind = info.get('industry', '').lower()
+        summ = info.get('longBusinessSummary', '').lower()
+        
+        full_text = f"{sec} {ind} {summ}"
+        
         for theme, keywords in THEME_KEYWORDS.items():
+            # [안전장치] 섹터가 맞지 않으면 특정 테마는 스킵
+            # 1. 헬스케어/바이오 섹터인데 '방산' 테마 검사 중이면 건너뜀 (Immune Defense 오탐지 방지)
+            if "healthcare" in sec and "방산" in theme:
+                continue
+            
+            # 2. 소비재(음식/식당) 섹터인데 '에너지' 테마 검사 중이면 건너뜀 (Wendy's 오탐지 방지)
+            if ("consumer" in sec or "restaurant" in ind) and "에너지" in theme:
+                continue
+                
             for kw in keywords:
-                if kw.lower() in summary:
+                if kw.lower() in full_text:
                     theme_detected = theme
                     break
             if theme_detected != "기타": break
             
-        # 등급 부여
         final_grade = "💣폭발대기"
-        
-        # 거래량이 말라있으면(평소의 70% 이하) 더 좋음 (폭풍전야)
         vol_avg = df['Volume'].iloc[-20:-1].mean()
         vol_now = df['Volume'].iloc[-1]
         
         reasons = [f"밴드폭{bandwidth:.1f}%"]
-        
         if vol_now < vol_avg * 0.7:
             final_grade = "🎯스나이퍼픽"
             reasons.append("🤫거래량급감")
             
         mini_chart_data = df['Close'].tail(30).tolist()
-        
-        # 목표가는 밴드 상단 돌파 시 슈팅 기대
-        target_price = df['Upper'].iloc[-1] * 1.1 # 상단 뚫고 10% 더
-        # 손절가는 밴드 하단 이탈 시
+        target_price = df['Upper'].iloc[-1] * 1.1 
         stop_price = df['Lower'].iloc[-1] * 0.98 
         
         if country == "KR":
@@ -206,9 +203,9 @@ def analyze_stock_v48(ticker, name, country, squeeze_limit, cap_limit):
             "흐름": mini_chart_data,
             "특이사항": " ".join(reasons),
             "🎯목표가": target_str,
-            "🛡️손절가": stop_str, # 이게 깨지면 응축이 아니라 하락임
+            "🛡️손절가": stop_str,
             "뉴스링크": news_url,
-            "정렬용": bandwidth # 밴드폭 좁은 순으로 정렬
+            "정렬용": bandwidth 
         }
 
     except:
@@ -267,7 +264,6 @@ if st.button(f"🔫 V48 폭발 징후 포착 ({start_idx}~{end_idx})"):
     
     if results:
         df = pd.DataFrame(results)
-        # 밴드폭이 좁은 순서대로 정렬 (가장 응축된 놈이 1등)
         df = df.sort_values("정렬용")
         
         st.session_state.scan_results_v48 = df
