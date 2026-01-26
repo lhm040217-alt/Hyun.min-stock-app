@@ -103,7 +103,14 @@ except Exception as e:
     st.stop()
 
 # --- 분석 로직 (수정됨: 엄격한 키워드 매칭) ---
-def analyze_stock_v48(ticker, name, country, squeeze_limit, cap_limit):
+def analyze_stock_v48(ticker, name, country, squeeze_limit, cap_limit):def analyze_stock_v48(ticker, name, country, squeeze_limit, cap_limit):
+    try:
+        # [추가] 스팩(SPAC) 및 인수목적 회사 제거
+        if "Acquisition" in name or "ACQUISITION" in name.upper(): return None
+        
+        stock = yf.Ticker(ticker)
+        # ... (나머지 코드 그대로)
+
     try:
         stock = yf.Ticker(ticker)
         
